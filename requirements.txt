@@ -1,0 +1,16 @@
+anthropic==0.79.0
+asttokens==3.0.0
+azure_storage==0.37.0
+coverage==7.13.4
+docker_py==1.10.6
+matplotlib==3.10.8
+numpy==2.4.2
+openai==2.20.0
+PyYAML==6.0.2
+PyYAML==6.0.3
+Requests==2.32.5
+tabulate==0.9.0
+tenacity==8.5.0
+tiktoken==0.9.0
+tqdm==4.67.1
+unidiff==0.7.5
