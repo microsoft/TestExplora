@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 from matplotlib.lines import Line2D
 import networkx as nx
+import logging
 
 VERSION = 'v2.3'
 NODE_TYPE_DIRECTORY = 'directory'
@@ -33,14 +34,18 @@ VALID_EDGE_TYPES = [
     EDGE_TYPE_IMPORTS,
 ]
 
-SKIP_DIRS = ['.github', '.git']
+SKIP_DIRS = [
+    '.git', '.github', '__pycache__', '.mypy_cache', '.pytest_cache', '.tox',
+    'build', 'dist', '.eggs', 'node_modules', '.venv', 'venv', 'env',
+    '.idea', '.vscode', '.direnv', '.pytest', '.coverage', 'docs'
+]
+
 
 
 def is_skip_dir(dirname):
-    for skip_dir in SKIP_DIRS:
-        if skip_dir in dirname:
-            return True
-    return False
+    parts = set(dirname.split(os.sep))
+    return any(skip in parts for skip in SKIP_DIRS)
+
 
 
 def handle_edge_cases(code):
@@ -124,8 +129,9 @@ def find_imports(filepath, repo_path, tree=None):
 
 
 class CodeAnalyzer(ast.NodeVisitor):
-    def __init__(self, filename):
+    def __init__(self, filename, code):
         self.filename = filename
+        self.code = code
         self.nodes = []
         self.node_name_stack = []
         self.node_type_stack = []
@@ -184,12 +190,12 @@ class CodeAnalyzer(ast.NodeVisitor):
         self.node_type_stack.pop()
 
     def _get_source_segment(self, node):
-        with open(self.filename, 'r') as file:
-            source_code = file.read()
-        return ast.get_source_segment(source_code, node)
+        # with open(self.filename, 'r') as file:
+        #     source_code = file.read()
+        return ast.get_source_segment(self.code, node)
 
 
-# Parse the specified file, using CodeAnalyzer to analyze classes and top-level functions
+# 解析指定文件，使用CodeAnalyzer分析文件中的类和顶级函数
 def analyze_file(filepath):
     with open(filepath, 'r') as file:
         code = file.read()
@@ -198,7 +204,7 @@ def analyze_file(filepath):
             tree = ast.parse(code, filename=filepath)
         except:
             raise SyntaxError
-    analyzer = CodeAnalyzer(filepath)
+    analyzer = CodeAnalyzer(filepath, code)
     try:
         analyzer.visit(tree)
     except RecursionError:
@@ -331,7 +337,7 @@ def resolve_symlink(file_path):
 #     return file_content
 
 
-# Traverse all Python files under repo_path, building a dependency graph of files, classes, and functions
+# 遍历repo_path下的所有Python文件，构建文件、类和函数的依赖关系图
 def build_graph(repo_path, fuzzy_search=True, global_import=False):
     graph = nx.MultiDiGraph()
     file_nodes = {}
@@ -386,7 +392,7 @@ def build_graph(repo_path, fuzzy_search=True, global_import=False):
                     else:
                         with open(file_path, 'r') as f:
                             file_content = f.read()
-
+                    logging.debug(f'Analyzing file: {file_path}')
                     graph.add_node(filename, type=NODE_TYPE_FILE, code=file_content)
                     file_nodes[filename] = file_path
 
@@ -516,10 +522,9 @@ def build_graph(repo_path, fuzzy_search=True, global_import=False):
 
 def build_json_graph(repo_path, fuzzy_search=True, global_import=False):
     graph = build_graph(repo_path, fuzzy_search, global_import)
-    temp_graph_dict = nx.node_link_data(graph, edges="links")
+    temp_graph_dict = nx.node_link_data(graph)
     codes = {}
     folders = {}
-
     nodes = temp_graph_dict['nodes']
     edges = temp_graph_dict['links']
     edge_dic = {}
@@ -718,9 +723,9 @@ def analyze_init(node, code_tree, graph, repo_path):
 
                     for sub_node in ast.walk(body_item):
                         if isinstance(sub_node, ast.Call):
-                            if isinstance(sub_node.func, ast.Name):  # plain function or class
+                            if isinstance(sub_node.func, ast.Name):  # 普通函数或类
                                 add_invoke(sub_node.func.id)
-                            if isinstance(sub_node.func, ast.Attribute):  # member function
+                            if isinstance(sub_node.func, ast.Attribute):  # 成员函数
                                 add_invoke(sub_node.func.attr)
                     break
             break
@@ -732,7 +737,7 @@ def analyze_invokes(node, code_tree, graph, repo_path):
     caller_name = node.split(':')[-1].split('.')[-1]
     file_path = os.path.join(repo_path, node.split(':')[0])
 
-    # Store found call relationships
+    # 存储找到的调用关系
     invocations = []
 
     def add_invoke(func_name):
@@ -764,7 +769,7 @@ def analyze_invokes(node, code_tree, graph, repo_path):
             # Recursively traverse child nodes
             traverse_call(child)
 
-    # Traverse AST nodes to find call relationships
+    # 遍历 AST 节点以找到调用关系
     for ast_node in ast.walk(code_tree):
         if (
             isinstance(ast_node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -774,11 +779,11 @@ def analyze_invokes(node, code_tree, graph, repo_path):
             imports = find_imports(file_path, repo_path, tree=ast_node)
             add_imports(node, imports, graph, repo_path)
 
-            # Traverse function decorators
+            # 遍历函数装饰器
             for decorator_node in ast_node.decorator_list:
                 process_decorator_node(decorator_node)
 
-            # Traverse all invoke child nodes in the function body (excluding inner functions and classes)
+            # 遍历函数体内的所有invoke子节点 (不包括内部函数、类)
             traverse_call(ast_node)
             break
 
@@ -949,12 +954,10 @@ def main():
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '--repo_path', type=str, default='DATA/repo/pallets__flask-5063'
+    logging.basicConfig(level=logging.DEBUG)
+    a = build_json_graph(
+        '/home/superbench/jiaxiang/Dev-TestCaseGen/build_benchmark/temp_repos/pyramid',
+        fuzzy_search=True
     )
-    parser.add_argument('--visualize', action='store_true')
-    parser.add_argument('--global_import', action='store_true')
-    args = parser.parse_args()
 
-    main()
+    b = 1
